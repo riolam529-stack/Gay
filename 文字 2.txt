@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>知識戰鬥 RPG - 廣闊世界更新版</title>
+<style>
+  body { margin: 0; background: #111424; color: #fff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+  #login-screen, #quiz-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
+  .box { background: #16213e; padding: 24px; border-radius: 12px; border: 2px solid #0f3460; text-align: center; max-width: 400px; width: 85%; }
+  select, input, button { padding: 12px 16px; margin: 8px; font-size: 16px; border-radius: 8px; border: none; }
+  button { background: #e94560; color: white; font-weight: bold; cursor: pointer; }
+  #hud { display: flex; flex-wrap: wrap; gap: 15px; padding: 10px; background: #0f3460; width: 100%; justify-content: center; font-size: 15px; box-sizing: border-box; box-shadow: 0 4px 8px rgba(0,0,0,0.3); }
+  canvas { border: 3px solid #e94560; margin-top: 10px; background: #222; max-width: 95vw; touch-action: none; border-radius: 8px; }
+  .hidden { display: none !important; }
+  .option-btn { display: block; width: 100%; margin: 10px 0; text-align: left; background: #0f3460; color: #fff; }
+  
+  /* iPad 螢幕控制台 */
+  #dpad { display: grid; grid-template-columns: repeat(3, 60px); grid-template-rows: repeat(2, 60px); gap: 8px; margin-top: 12px; }
+  .dpad-btn { background: rgba(255, 255, 255, 0.15); border: 2px solid rgba(255, 255, 255, 0.3); border-radius: 12px; font-size: 24px; display: flex; justify-content: center; align-items: center; color: white; padding: 0; margin: 0; }
+  .dpad-btn:active { background: #e94560; }
+</style>
+</head>
+<body>
+
+<!-- 登入畫面 -->
+<div id="login-screen">
+  <div class="box">
+    <h1>⚔️ 知識戰鬥 RPG：開放世界</h1>
+    <p>巨大地圖已解鎖！探索不同背景區域，擊敗遠方的 Boss 吧！</p>
+    <select id="class-select">
+      <option value="6A">6A 班</option>
+      <option value="6B">6B 班</option>
+      <option value="6C">6C 班</option>
+      <option value="6D">6D 班</option>
+    </select>
+    <input type="number" id="student-id" placeholder="班號 (1-40)" min="1" max="40" style="width:120px;">
+    <br>
+    <button onclick="startGame()">進入自由世界</button>
+  </div>
+</div>
+
+<!-- 狀態欄 -->
+<div id="hud">
+  <span id="player-info">👤 冒險者：未登入</span>
+  <span>💎 魔石：<strong id="stones">0</strong></span>
+  <span>❤️ 生命：<strong id="hp">100</strong></span>
+  <span>👹 Boss HP：<strong id="boss-hp">1000</strong></span>
+</div>
+
+<!-- 視窗畫布（固定顯示大小，內部地圖很大） -->
+<canvas id="world" width="600" height="400"></canvas>
+
+<!-- iPad 控制按鈕 -->
+<div id="dpad">
+  <div></div>
+  <button class="dpad-btn" id="btn-up">⬆️</button>
+  <div></div>
+  <button class="dpad-btn" id="btn-left">⬅️</button>
+  <button class="dpad-btn" id="btn-down">⬇️</button>
+  <button class="dpad-btn" id="btn-right">➡️</button>
+</div>
+<p style="font-size:13px; color:#aaa; margin:6px;">💡 提示：可以直接點擊地圖任意位置，角色會自動尋路走過去。</p>
+
+<!-- 戰鬥視窗 -->
+<div id="quiz-modal" class="hidden">
+  <div class="box">
+    <h2 id="battle-title">⚠️ 遭遇知識魔物！</h2>
+    <p id="question-text">題目載入中...</p>
+    <div id="options-container"></div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('world');
+const ctx = canvas.getContext('2d');
+
+// 1. 設定超大世界地圖尺寸 (Bigger Map)
+const WORLD_WIDTH = 1600;
+const WORLD_HEIGHT = 1200;
+
+// 玩家與物件設定
+let player = { x: 100, y: 100, size: 28, speed: 6, stones: 0, hp: 100, targetX: null, targetY: null };
+let boss = { x: 1400, y: 1000, size: 50, hp: 1000 };
+
+// 在大世界散落更多怪物與寶箱 (Longer Gameplay)
+let enemies = [
+  { x: 300, y: 200, size: 26, active: true },
+  { x: 700, y: 300, size: 26, active: true },
+  { x: 200, y: 800, size: 26, active: true },
+  { x: 900, y: 700, size: 26, active: true },
+  { x: 1200, y: 400, size: 26, active: true },
+  { x: 1300, y: 850, size: 26, active: true }
+];
+
+let chests = [
+  { x: 500, y: 150, size: 26, opened: false },
+  { x: 100, y: 1000, size: 26, opened: false },
+  { x: 800, y: 900, size: 26, opened: false },
+  { x: 1450, y: 200, size: 26, opened: false }
+];
+
+// 相機視野設定
+let camera = { x: 0, y: 0 };
+
+const questions = [
+  { q: "香港特別行政區成立於哪一年？", options: ["1997年", "1984年", "2000年"], ans: 0 },
+  { q: "中國四大發明中，哪一項對航海探索貢獻最大？", options: ["造紙術", "指南針", "活字印刷術"], ans: 1 },
+  { q: "以下哪一個屬於可再生能源？", options: ["煤炭", "天然氣", "太陽能"], ans: 2 }
+];
+
+let moveState = { up: false, down: false, left: false, right: false };
+let isPaused = false;
+let currentTarget = null;
+
+// 觸控方向鍵綁定
+function bindTouch(id, dir) {
+  const btn = document.getElementById(id);
+  const start = (e) => { e.preventDefault(); moveState[dir] = true; player.targetX = null; };
+  const end = (e) => { e.preventDefault(); moveState[dir] = false; };
+  btn.addEventListener('touchstart', start, { passive: false });
+  btn.addEventListener('touchend', end);
+  btn.addEventListener('mousedown', start);
+  btn.addEventListener('mouseup', end);
+}
+bindTouch('btn-up', 'up');
+bindTouch('btn-down', 'down');
+bindTouch('btn-left', 'left');
+bindTouch('btn-right', 'right');
+
+// 點擊地圖自動導航（換算為大世界坐標）
+canvas.addEventListener('pointerdown', (e) => {
+  if (isPaused) return;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const clickX = (e.clientX - rect.left) * scaleX;
+  const clickY = (e.clientY - rect.top) * scaleY;
+  
+  // 加上目前相機的偏移量，得到真實世界坐標
+  player.targetX = clickX + camera.x - player.size / 2;
+  player.targetY = clickY + camera.y - player.size / 2;
+});
+
+function startGame() {
+  const cls = document.getElementById('class-select').value;
+  const id = document.getElementById('student-id').value || '1';
+  document.getElementById('player-info').innerText = `👤 ${cls} (${id}號)`;
+  document.getElementById('login-screen').classList.add('hidden');
+  gameLoop();
+}
+
+function triggerQuiz(target, isBoss = false) {
+  isPaused = true;
+  player.targetX = null;
+  moveState = { up: false, down: false, left: false, right: false };
+  currentTarget = { obj: target, isBoss };
+  const q = questions[Math.floor(Math.random() * questions.length)];
+  document.getElementById('battle-title').innerText = isBoss ? "🔥 WARNING! 挑戰最終魔王！" : "👾 遭遇知識魔物！";
+  document.getElementById('question-text').innerText = q.q;
+  const container = document.getElementById('options-container');
+  container.innerHTML = '';
+  q.options.forEach((opt, idx) => {
+    const btn = document.createElement('button');
+    btn.className = 'option-btn';
+    btn.innerText = opt;
+    btn.onclick = () => resolveAnswer(idx === q.ans);
+    container.appendChild(btn);
+  });
+  document.getElementById('quiz-modal').classList.remove('hidden');
+}
+
+function resolveAnswer(isCorrect) {
+  document.getElementById('quiz-modal').classList.add('hidden');
+  if (isCorrect) {
+    if (currentTarget.isBoss) {
+      const dmg = 250 + player.stones * 15;
+      boss.hp = Math.max(0, boss.hp - dmg);
+      alert(`答對了！發動魔石共鳴！對 Boss 造成 ${dmg} 點致命傷害！`);
+      if (boss.hp === 0) alert("🏆 VICTORY！你成功守護了這片知識大陸！");
+    } else {
+      player.stones += 10;
+      currentTarget.obj.active = false;
+      alert("答對了！獲得 10 顆魔石！");
+    }
+  } else {
+    player.hp = Math.max(0, player.hp - 25);
+    alert("答錯了！受到魔物精神反擊，生命值 -25！");
+    if (player.hp === 0) {
+      alert("💀 防線崩潰！重新在新手村復活。");
+      player.hp = 100; player.x = 100; player.y = 100;
+    }
+  }
+  // 彈開玩家防止連續觸發
+  player.x = Math.max(50, player.x - 40);
+  player.y = Math.max(50, player.y - 40);
+  updateHUD();
+  isPaused = false;
+}
+
+function updateHUD() {
+  document.getElementById('stones').innerText = player.stones;
+  document.getElementById('hp').innerText = player.hp;
+  document.getElementById('boss-hp').innerText = boss.hp;
+}
+
+function checkCollision(a, b) {
+  return a.x < b.x + b.size && a.x + a.size > b.x && a.y < b.y + b.size && a.y + a.size > b.y;
+}
+
+function update() {
+  if (isPaused) return;
+
+  // 按鍵/觸控移動控制
+  if (moveState.up && player.y > 0) player.y -= player.speed;
+  if (moveState.down && player.y < WORLD_HEIGHT - player.size) player.y += player.speed;
+  if (moveState.left && player.x > 0) player.x -= player.speed;
+  if (moveState.right && player.x < WORLD_WIDTH - player.size) player.x += player.speed;
+
+  // 點擊自動導航移動
+  if (player.targetX !== null && player.targetY !== null) {
+    const dx = player.targetX - player.x;
+    const dy = player.targetY - player.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > player.speed) {
+      player.x += (dx / dist) * player.speed;
+      player.y += (dy / dist) * player.speed;
+    } else {
+      player.targetX = null;
+    }
+  }
+
+  // 碰撞檢查
+  enemies.forEach(e => { if (e.active && checkCollision(player, e)) triggerQuiz(e, false); });
+  chests.forEach(c => {
+    if (!c.opened && checkCollision(player, c)) {
+      c.opened = true; player.stones += 25; updateHUD();
+      alert("📦 發現大世界寶箱！獲得 25 顆魔石！");
+    }
+  });
+  if (boss.hp > 0 && checkCollision(player, boss)) triggerQuiz(boss, true);
+
+  // 2. 相機動態跟隨玩家 (Camera center on player)
+  camera.x = player.x + player.size / 2 - canvas.width / 2;
+  camera.y = player.y + player.size / 2 - canvas.height / 2;
+
+  // 限制相機不會移出大地圖邊界
+  camera.x = Math.max(0, Math.min(camera.x, WORLD_WIDTH - canvas.width));
+  camera.y = Math.max(0, Math.min(camera.y, WORLD_HEIGHT - canvas.height));
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  // 將畫布平移，實現相機滾動效果
+  ctx.translate(-camera.x, -camera.y);
+
+  // 3. 繪製不同的區域背景色塊 (Add Background Environments)
+  // 區域 A：新手村與知識森林 (左上)
+  ctx.fillStyle = "#2b4c3f";
+  ctx.fillRect(0, 0, 800, 600);
+  
+  // 區域 B：平原與歷史遺跡 (右上)
+  ctx.fillStyle = "#394a6b";
+  ctx.fillRect(800, 0, 800, 600);
+  
+  // 區域 C：神秘沼澤 (左下)
+  ctx.fillStyle = "#483d8b";
+  ctx.fillRect(0, 600, 800, 600);
+
+  // 區域 D：魔王堡壘荒漠 (右下)
+  ctx.fillStyle = "#5c2e2e";
+  ctx.fillRect(800, 600, 800, 600);
+
+  // 繪製橫跨整個大世界的地圖網格線
